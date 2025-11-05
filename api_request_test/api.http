@@ -1,0 +1,8 @@
+### Gateway 로컬 테스트용
+
+### GET users
+GET http://localhost:8080/user/users
+
+
+### GET accommodations
+GET http://localhost:8080/accommodation/accommodations
