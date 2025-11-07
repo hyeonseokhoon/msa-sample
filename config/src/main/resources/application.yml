@@ -11,4 +11,4 @@ spring:
           uri: https://github.com/hyeonseokhoon/msa-sample.git # github repository
           search-paths: config-repo
           clone-on-start: true
-          default-label: main # ?? ???
+          default-label: main # 기본 브랜치

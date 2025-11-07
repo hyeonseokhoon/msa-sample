@@ -1,0 +1,145 @@
+name: Build & Deploy (ECS EC2)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "accommodation/**"
+      - "common/**"
+      - "config/**"
+      - "eureka/**"
+      - "gateway/**"
+      - "reservation/**"
+      - "user/**"
+      - ".github/workflows/deploy.yml"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          token: ${{ github.token }}
+          filters: |
+            config: 'config/**'
+            eureka: 'eureka/**'
+            gateway: 'gateway/**'
+            user: 'user/**'
+            accommodation: 'accommodation/**'
+            reservation: 'reservation/**'
+
+  deploy:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: development
+    strategy:
+      matrix:
+        service: [config, eureka, gateway, user, accommodation, reservation]
+      max-parallel: 3
+    if: ${{ contains(fromJson(needs.plan.outputs.changed), matrix.service) }}
+    env:
+      ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      SUBNETS: ${{ vars.SUBNETS }}
+      SECURITY_GROUPS: ${{ vars.SECURITY_GROUPS }}
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set service metadata
+        id: meta
+        run: |
+          SVC=${{ matrix.service }}
+          case "$SVC" in
+            config)        PORT=8888; REPO=${{ vars.ECR_CONFIG_REPO }} ;;
+            eureka)        PORT=8761; REPO=${{ vars.ECR_EUREKA_REPO }} ;;
+            gateway)       PORT=8080; REPO=${{ vars.ECR_GATEWAY_REPO }} ;;
+            user)          PORT=8081; REPO=${{ vars.ECR_USER_REPO }} ;;
+            accommodation) PORT=8082; REPO=${{ vars.ECR_ACCOMMODATION_REPO }} ;;
+            reservation)   PORT=8083; REPO=${{ vars.ECR_RESERVATION_REPO }} ;;
+          esac
+          echo "PORT=$PORT" >> $GITHUB_OUTPUT
+          echo "REPO=$REPO" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repo exists
+        run: |
+          aws ecr describe-repositories --repository-names "${{ steps.meta.outputs.REPO }}" >/dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "${{ steps.meta.outputs.REPO }}"
+
+      - name: Build & Push image
+        working-directory: ${{ matrix.service }}
+        run: |
+          ECR_URI=$(aws ecr describe-repositories --repository-names "${{ steps.meta.outputs.REPO }}" --query 'repositories[0].repositoryUri' --output text)
+          docker build -t ${ECR_URI}:${IMAGE_TAG} .
+          docker push ${ECR_URI}:${IMAGE_TAG}
+          echo "ECR_URI=${ECR_URI}" >> $GITHUB_ENV
+
+      - name: Render taskdef
+        run: |
+          sed \
+            -e "s|__SERVICE__|${{ matrix.service }}|g" \
+            -e "s|__IMAGE_URI__|${ECR_URI}|g" \
+            -e "s|__IMAGE_TAG__|${IMAGE_TAG}|g" \
+            -e "s|__PORT__|${{ steps.meta.outputs.PORT }}|g" \
+            -e "s|__REGION__|${{ env.AWS_REGION }}|g" \
+            .github/workflows/deploy/taskdef-${{ matrix.service }}.json.tmpl > taskdef.json
+          cat taskdef.json
+
+      - name: Register new task definition
+        id: reg
+        run: |
+          REV_ARN=$(aws ecs register-task-definition --cli-input-json file://taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "REV_ARN=$REV_ARN" >> $GITHUB_OUTPUT
+
+      - name: Create service if missing (first time only)
+        id: ensure-svc
+        continue-on-error: true
+        run: |
+          aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "sparta-${{ matrix.service }}-svc" --query 'services[0].status' --output text
+
+      - name: Create service (if not exists)
+        if: steps.ensure-svc.outcome == 'failure'
+        run: |
+          NETCFG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUPS}],assignPublicIp=DISABLED}"
+          aws ecs create-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service-name "sparta-${{ matrix.service }}-svc" \
+            --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --platform-version LATEST \
+            --network-configuration "$NETCFG"
+
+      - name: Attach gateway to ALB (only gateway)
+        if: matrix.service == 'gateway'
+        run: |
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "sparta-gateway-svc" \
+            --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --force-new-deployment \
+            --load-balancers targetGroupArn=${{ vars.ALB_TG_ARN }},containerName=gateway,containerPort=8080
+
+      - name: Rolling update (non-gateway)
+        if: matrix.service != 'gateway'
+        run: |
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "sparta-${{ matrix.service }}-svc" \
+            --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --force-new-deployment
