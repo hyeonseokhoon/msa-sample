@@ -1,3 +1,4 @@
+
 name: Build & Deploy (ECS EC2)
 
 on:
@@ -19,6 +20,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.filter.outputs.changes }}
+      config-changed: ${{ steps.check.outputs.config }}
+      eureka-changed: ${{ steps.check.outputs.eureka }}
+      gateway-changed: ${{ steps.check.outputs.gateway }}
+      user-changed: ${{ steps.check.outputs.user }}
+      accommodation-changed: ${{ steps.check.outputs.accommodation }}
+      reservation-changed: ${{ steps.check.outputs.reservation }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -33,13 +40,323 @@ jobs:
             accommodation: 'accommodation/**'
             reservation: 'reservation/**'
 
-  deploy:
+      - id: check
+        run: |
+          echo "config=${{ contains(fromJson(steps.filter.outputs.changes), 'config') }}" >> $GITHUB_OUTPUT
+          echo "eureka=${{ contains(fromJson(steps.filter.outputs.changes), 'eureka') }}" >> $GITHUB_OUTPUT
+          echo "gateway=${{ contains(fromJson(steps.filter.outputs.changes), 'gateway') }}" >> $GITHUB_OUTPUT
+          echo "user=${{ contains(fromJson(steps.filter.outputs.changes), 'user') }}" >> $GITHUB_OUTPUT
+          echo "accommodation=${{ contains(fromJson(steps.filter.outputs.changes), 'accommodation') }}" >> $GITHUB_OUTPUT
+          echo "reservation=${{ contains(fromJson(steps.filter.outputs.changes), 'reservation') }}" >> $GITHUB_OUTPUT
+
+  # 1단계: Config Server - 변경시만 배포
+  deploy-config:
     needs: plan
+    if: needs.plan.outputs.config-changed == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      SUBNETS: ${{ vars.SUBNETS }}
+      SECURITY_GROUPS: ${{ vars.SECURITY_GROUPS }}
+      IMAGE_TAG: ${{ github.sha }}
+      SERVICE: config
+      PORT: 8888
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repo exists
+        run: |
+          aws ecr describe-repositories --repository-names "${{ vars.ECR_CONFIG_REPO }}" >/dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "${{ vars.ECR_CONFIG_REPO }}"
+
+      - name: Build & Push image
+        run: |
+          ECR_URI=$(aws ecr describe-repositories --repository-names "${{ vars.ECR_CONFIG_REPO }}" --query 'repositories[0].repositoryUri' --output text)
+          docker build -f config/Dockerfile -t ${ECR_URI}:${IMAGE_TAG} .
+          docker push ${ECR_URI}:${IMAGE_TAG}
+          echo "ECR_URI=${ECR_URI}" >> $GITHUB_ENV
+
+      - name: Render taskdef
+        run: |
+          sed \
+            -e "s|__SERVICE__|${SERVICE}|g" \
+            -e "s|__IMAGE_URI__|${ECR_URI}|g" \
+            -e "s|__IMAGE_TAG__|${IMAGE_TAG}|g" \
+            -e "s|__PORT__|${PORT}|g" \
+            -e "s|__REGION__|${AWS_REGION}|g" \
+            -e "s|__ACCOUNT_ID__|${ACCOUNT_ID}|g" \
+            .github/workflows/deploy/taskdef-config.json.tmpl > taskdef.json
+
+      - name: Register new task definition
+        id: reg
+        run: |
+          REV_ARN=$(aws ecs register-task-definition --cli-input-json file://taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "REV_ARN=$REV_ARN" >> $GITHUB_OUTPUT
+
+      - name: Check if service exists
+        id: ensure-svc
+        continue-on-error: true
+        run: |
+          STATUS=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "project-config-svc" --query 'services[0].status' --output text 2>/dev/null)
+          if [ "$STATUS" == "ACTIVE" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create service (if not exists)
+        if: steps.ensure-svc.outputs.exists != 'true'
+        run: |
+          NETCFG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUPS}],assignPublicIp=DISABLED}"
+          aws ecs create-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service-name "project-config-svc" \
+            --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --platform-version LATEST \
+            --network-configuration "$NETCFG"
+
+      - name: Update service (if exists)
+        if: steps.ensure-svc.outputs.exists == 'true'
+        run: |
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "project-config-svc" \
+            --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --force-new-deployment
+
+      - name: Wait for service to be stable
+        run: |
+          echo "⏳ Waiting for Config Server to be stable..."
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "project-config-svc"
+          echo "✅ Config Server is stable"
+
+  # 2단계: Eureka Server - 변경시만 배포, Config 완료 후
+  deploy-eureka:
+    needs: [plan, deploy-config]
+    # Config가 변경되었으면 완료 후, 변경 안되었으면 바로 실행
+    if: |
+      always() && 
+      (needs.deploy-config.result == 'success' || needs.deploy-config.result == 'skipped') &&
+      needs.plan.outputs.eureka-changed == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      SUBNETS: ${{ vars.SUBNETS }}
+      SECURITY_GROUPS: ${{ vars.SECURITY_GROUPS }}
+      IMAGE_TAG: ${{ github.sha }}
+      SERVICE: eureka
+      PORT: 8761
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repo exists
+        run: |
+          aws ecr describe-repositories --repository-names "${{ vars.ECR_EUREKA_REPO }}" >/dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "${{ vars.ECR_EUREKA_REPO }}"
+
+      - name: Build & Push image
+        run: |
+          ECR_URI=$(aws ecr describe-repositories --repository-names "${{ vars.ECR_EUREKA_REPO }}" --query 'repositories[0].repositoryUri' --output text)
+          docker build -f eureka/Dockerfile -t ${ECR_URI}:${IMAGE_TAG} .
+          docker push ${ECR_URI}:${IMAGE_TAG}
+          echo "ECR_URI=${ECR_URI}" >> $GITHUB_ENV
+
+      - name: Render taskdef
+        run: |
+          sed \
+            -e "s|__SERVICE__|${SERVICE}|g" \
+            -e "s|__IMAGE_URI__|${ECR_URI}|g" \
+            -e "s|__IMAGE_TAG__|${IMAGE_TAG}|g" \
+            -e "s|__PORT__|${PORT}|g" \
+            -e "s|__REGION__|${AWS_REGION}|g" \
+            -e "s|__ACCOUNT_ID__|${ACCOUNT_ID}|g" \
+            .github/workflows/deploy/taskdef-eureka.json.tmpl > taskdef.json
+
+      - name: Register new task definition
+        id: reg
+        run: |
+          REV_ARN=$(aws ecs register-task-definition --cli-input-json file://taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "REV_ARN=$REV_ARN" >> $GITHUB_OUTPUT
+
+      - name: Check if service exists
+        id: ensure-svc
+        continue-on-error: true
+        run: |
+          STATUS=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "project-eureka-svc" --query 'services[0].status' --output text 2>/dev/null)
+          if [ "$STATUS" == "ACTIVE" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create service (if not exists)
+        if: steps.ensure-svc.outputs.exists != 'true'
+        run: |
+          NETCFG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUPS}],assignPublicIp=DISABLED}"
+          aws ecs create-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service-name "project-eureka-svc" \
+            --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --platform-version LATEST \
+            --network-configuration "$NETCFG"
+
+      - name: Update service (if exists)
+        if: steps.ensure-svc.outputs.exists == 'true'
+        run: |
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "project-eureka-svc" \
+            --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --force-new-deployment
+
+      - name: Wait for service to be stable
+        run: |
+          echo "⏳ Waiting for Eureka Server to be stable..."
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "project-eureka-svc"
+          echo "✅ Eureka Server is stable"
+
+  # 3단계: Gateway - 변경시만 배포
+  deploy-gateway:
+    needs: [plan, deploy-config, deploy-eureka]
+    if: |
+      always() && 
+      (needs.deploy-config.result == 'success' || needs.deploy-config.result == 'skipped') &&
+      (needs.deploy-eureka.result == 'success' || needs.deploy-eureka.result == 'skipped') &&
+      needs.plan.outputs.gateway-changed == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      SUBNETS: ${{ vars.SUBNETS }}
+      SECURITY_GROUPS: ${{ vars.SECURITY_GROUPS }}
+      IMAGE_TAG: ${{ github.sha }}
+      SERVICE: gateway
+      PORT: 8080
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repo exists
+        run: |
+          aws ecr describe-repositories --repository-names "${{ vars.ECR_GATEWAY_REPO }}" >/dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "${{ vars.ECR_GATEWAY_REPO }}"
+
+      - name: Build & Push image
+        run: |
+          ECR_URI=$(aws ecr describe-repositories --repository-names "${{ vars.ECR_GATEWAY_REPO }}" --query 'repositories[0].repositoryUri' --output text)
+          docker build -f gateway/Dockerfile -t ${ECR_URI}:${IMAGE_TAG} .
+          docker push ${ECR_URI}:${IMAGE_TAG}
+          echo "ECR_URI=${ECR_URI}" >> $GITHUB_ENV
+
+      - name: Render taskdef
+        run: |
+          sed \
+            -e "s|__SERVICE__|${SERVICE}|g" \
+            -e "s|__IMAGE_URI__|${ECR_URI}|g" \
+            -e "s|__IMAGE_TAG__|${IMAGE_TAG}|g" \
+            -e "s|__PORT__|${PORT}|g" \
+            -e "s|__REGION__|${AWS_REGION}|g" \
+            -e "s|__ACCOUNT_ID__|${ACCOUNT_ID}|g" \
+            .github/workflows/deploy/taskdef-gateway.json.tmpl > taskdef.json
+
+      - name: Register new task definition
+        id: reg
+        run: |
+          REV_ARN=$(aws ecs register-task-definition --cli-input-json file://taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "REV_ARN=$REV_ARN" >> $GITHUB_OUTPUT
+
+      - name: Check if service exists
+        id: ensure-svc
+        continue-on-error: true
+        run: |
+          STATUS=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "project-gateway-svc" --query 'services[0].status' --output text 2>/dev/null)
+          if [ "$STATUS" == "ACTIVE" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create service (if not exists)
+        if: steps.ensure-svc.outputs.exists != 'true'
+        run: |
+          NETCFG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUPS}],assignPublicIp=DISABLED}"
+          aws ecs create-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service-name "project-gateway-svc" \
+            --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --platform-version LATEST \
+            --network-configuration "$NETCFG" \
+            --load-balancers "targetGroupArn=${{ secrets.ALB_TG_ARN }},containerName=gateway,containerPort=8080"
+
+      - name: Update service (if exists)
+        if: steps.ensure-svc.outputs.exists == 'true'
+        run: |
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "project-gateway-svc" \
+            --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --force-new-deployment
+
+  # 4단계: 비즈니스 서비스들 - 변경된 것만 병렬 배포
+  deploy-services:
+    needs: [plan, deploy-config, deploy-eureka, deploy-gateway]
+    if: |
+      always() && 
+      (needs.deploy-config.result == 'success' || needs.deploy-config.result == 'skipped') &&
+      (needs.deploy-eureka.result == 'success' || needs.deploy-eureka.result == 'skipped') &&
+      (needs.deploy-gateway.result == 'success' || needs.deploy-gateway.result == 'skipped')
     runs-on: ubuntu-latest
     environment: production
     strategy:
       matrix:
-        service: [ config, eureka, gateway, user, accommodation, reservation ]
+        service: [ user, accommodation, reservation ]
       max-parallel: 3
 
     env:
@@ -52,18 +369,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check if service changed
+        id: changed
+        run: |
+          case "${{ matrix.service }}" in
+            user)          CHANGED="${{ needs.plan.outputs.user-changed }}" ;;
+            accommodation) CHANGED="${{ needs.plan.outputs.accommodation-changed }}" ;;
+            reservation)   CHANGED="${{ needs.plan.outputs.reservation-changed }}" ;;
+          esac
+          echo "changed=${CHANGED}" >> $GITHUB_OUTPUT
+
       - name: Skip unchanged services
-        if: ${{ !contains(fromJson(needs.plan.outputs.changed), matrix.service) }}
-        run: echo "No changes in ${{ matrix.service }}, skipping." && exit 0
+        if: steps.changed.outputs.changed != 'true'
+        run: |
+          echo "⏭️ No changes in ${{ matrix.service }}, skipping deployment."
+          exit 0
 
       - name: Set service metadata
         id: meta
         run: |
           SVC=${{ matrix.service }}
           case "$SVC" in
-            config)        PORT=8888; REPO=${{ vars.ECR_CONFIG_REPO }} ;;
-            eureka)        PORT=8761; REPO=${{ vars.ECR_EUREKA_REPO }} ;;
-            gateway)       PORT=8080; REPO=${{ vars.ECR_GATEWAY_REPO }} ;;
             user)          PORT=8081; REPO=${{ vars.ECR_USER_REPO }} ;;
             accommodation) PORT=8082; REPO=${{ vars.ECR_ACCOMMODATION_REPO }} ;;
             reservation)   PORT=8083; REPO=${{ vars.ECR_RESERVATION_REPO }} ;;
@@ -103,7 +429,6 @@ jobs:
             -e "s|__REGION__|${{ env.AWS_REGION }}|g" \
             -e "s|__ACCOUNT_ID__|${{ env.ACCOUNT_ID }}|g" \
             .github/workflows/deploy/taskdef-${{ matrix.service }}.json.tmpl > taskdef.json
-          cat taskdef.json
 
       - name: Register new task definition
         id: reg
@@ -111,7 +436,7 @@ jobs:
           REV_ARN=$(aws ecs register-task-definition --cli-input-json file://taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "REV_ARN=$REV_ARN" >> $GITHUB_OUTPUT
 
-      - name: Create service if missing (first time only)
+      - name: Check if service exists
         id: ensure-svc
         continue-on-error: true
         run: |
@@ -126,45 +451,20 @@ jobs:
         if: steps.ensure-svc.outputs.exists != 'true'
         run: |
           NETCFG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUPS}],assignPublicIp=DISABLED}"
-          
-          if [ "${{ matrix.service }}" == "gateway" ]; then
-            # Gateway는 ALB와 함께 생성
-            aws ecs create-service \
-              --cluster "${ECS_CLUSTER}" \
-              --service-name "project-${{ matrix.service }}-svc" \
-              --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
-              --desired-count 1 \
-              --launch-type FARGATE \
-              --platform-version LATEST \
-              --network-configuration "$NETCFG" \
-              --load-balancers "targetGroupArn=${{ secrets.ALB_TG_ARN }},containerName=gateway,containerPort=8080"
-          else
-            # 일반 서비스
-            aws ecs create-service \
-              --cluster "${ECS_CLUSTER}" \
-              --service-name "project-${{ matrix.service }}-svc" \
-              --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
-              --desired-count 1 \
-              --launch-type FARGATE \
-              --platform-version LATEST \
-              --network-configuration "$NETCFG"
-          fi
-          
+          aws ecs create-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service-name "project-${{ matrix.service }}-svc" \
+            --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --platform-version LATEST \
+            --network-configuration "$NETCFG"
+
       - name: Update service (if exists)
         if: steps.ensure-svc.outputs.exists == 'true'
         run: |
-          if [ "${{ matrix.service }}" == "gateway" ]; then
-            # Gateway 업데이트 (ALB 포함)
-            aws ecs update-service \
-              --cluster "${ECS_CLUSTER}" \
-              --service "project-${{ matrix.service }}-svc" \
-              --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
-              --force-new-deployment
-          else
-            # 일반 서비스 업데이트
-            aws ecs update-service \
-              --cluster "${ECS_CLUSTER}" \
-              --service "project-${{ matrix.service }}-svc" \
-              --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
-              --force-new-deployment
-          fi
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "project-${{ matrix.service }}-svc" \
+            --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --force-new-deployment
