@@ -86,7 +86,6 @@ jobs:
           aws ecr create-repository --repository-name "${{ steps.meta.outputs.REPO }}"
 
       - name: Build & Push image
-        working-directory: ${{ matrix.service }}
         run: |
           ECR_URI=$(aws ecr describe-repositories --repository-names "${{ steps.meta.outputs.REPO }}" --query 'repositories[0].repositoryUri' --output text)
           docker build -f ${{ matrix.service }}/Dockerfile -t ${ECR_URI}:${IMAGE_TAG} .
