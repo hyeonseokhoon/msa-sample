@@ -35,7 +35,7 @@ jobs:
   deploy:
     needs: plan
     runs-on: ubuntu-latest
-    environment: development
+    environment: production
     strategy:
       matrix:
         service: [config, eureka, gateway, user, accommodation, reservation]
@@ -110,10 +110,15 @@ jobs:
         id: ensure-svc
         continue-on-error: true
         run: |
-          aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "sparta-${{ matrix.service }}-svc" --query 'services[0].status' --output text
+          STATUS=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "sparta-${{ matrix.service }}-svc" --query 'services[0].status' --output text 2>/dev/null)
+          if [ "$STATUS" == "ACTIVE" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create service (if not exists)
-        if: steps.ensure-svc.outcome == 'failure'
+        if: steps.ensure-svc.outputs.exists != 'true'
         run: |
           NETCFG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUPS}],assignPublicIp=DISABLED}"
           aws ecs create-service \
