@@ -149,9 +149,9 @@ jobs:
               --network-configuration "$NETCFG"
           fi
           
-          - name: Update service (if exists)
-          if: steps.ensure-svc.outputs.exists == 'true'
-          run: |
+      - name: Update service (if exists)
+        if: steps.ensure-svc.outputs.exists == 'true'
+        run: |
           if [ "${{ matrix.service }}" == "gateway" ]; then
             # Gateway 업데이트 (ALB 포함)
             aws ecs update-service \
