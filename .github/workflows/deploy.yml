@@ -12,6 +12,7 @@ on:
       - "reservation/**"
       - "user/**"
       - ".github/workflows/deploy.yml"
+      - ".github/workflows/deploy/taskdef-*.json.tmpl"
 
 jobs:
   plan:
