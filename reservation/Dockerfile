@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jdk AS builder
+FROM eclipse-temurin:17-jdk AS builder
 WORKDIR /build
 
 # 루트 프로젝트 파일 복사
@@ -17,7 +17,7 @@ COPY reservation ./reservation
 RUN ./gradlew :reservation:clean :reservation:bootJar --no-daemon
 
 # 실행 이미지
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:17-jre
 WORKDIR /app
 COPY --from=builder /build/reservation/build/libs/*.jar app.jar
 EXPOSE 8083
