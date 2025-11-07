@@ -55,7 +55,7 @@ jobs:
   # 1단계: Config Server
   deploy-config:
     needs: plan
-    if: needs.plan.outputs.config-changed == 'true'
+#    if: needs.plan.outputs.config-changed == 'true'
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -209,10 +209,10 @@ jobs:
   # 2단계: Eureka Server
   deploy-eureka:
     needs: [plan, deploy-config]
-    if: |
-      always() && 
-      (needs.deploy-config.result == 'success' || needs.deploy-config.result == 'skipped') &&
-      needs.plan.outputs.eureka-changed == 'true'
+#    if: |
+#      always() &&
+#      (needs.deploy-config.result == 'success' || needs.deploy-config.result == 'skipped') &&
+#      needs.plan.outputs.eureka-changed == 'true'
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -366,11 +366,11 @@ jobs:
   # 3단계: Gateway
   deploy-gateway:
     needs: [plan, deploy-config, deploy-eureka]
-    if: |
-      always() && 
-      (needs.deploy-config.result == 'success' || needs.deploy-config.result == 'skipped') &&
-      (needs.deploy-eureka.result == 'success' || needs.deploy-eureka.result == 'skipped') &&
-      needs.plan.outputs.gateway-changed == 'true'
+#    if: |
+#      always() &&
+#      (needs.deploy-config.result == 'success' || needs.deploy-config.result == 'skipped') &&
+#      (needs.deploy-eureka.result == 'success' || needs.deploy-eureka.result == 'skipped') &&
+#      needs.plan.outputs.gateway-changed == 'true'
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -525,11 +525,11 @@ jobs:
   # 4단계: 비즈니스 서비스들
   deploy-services:
     needs: [plan, deploy-config, deploy-eureka, deploy-gateway]
-    if: |
-      always() && 
-      (needs.deploy-config.result == 'success' || needs.deploy-config.result == 'skipped') &&
-      (needs.deploy-eureka.result == 'success' || needs.deploy-eureka.result == 'skipped') &&
-      (needs.deploy-gateway.result == 'success' || needs.deploy-gateway.result == 'skipped')
+#    if: |
+#      always() &&
+#      (needs.deploy-config.result == 'success' || needs.deploy-config.result == 'skipped') &&
+#      (needs.deploy-eureka.result == 'success' || needs.deploy-eureka.result == 'skipped') &&
+#      (needs.deploy-gateway.result == 'success' || needs.deploy-gateway.result == 'skipped')
     runs-on: ubuntu-latest
     environment: production
     strategy:
