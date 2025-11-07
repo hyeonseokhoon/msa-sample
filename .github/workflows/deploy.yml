@@ -1,5 +1,5 @@
 
-name: Build & Deploy (ECS EC2)
+name: Build & Deploy (ECS with Service Discovery)
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
       - "accommodation/**"
       - "common/**"
       - "config/**"
-      - "config-repo/**"  ###
+      - "config-repo/**"
       - "eureka/**"
       - "gateway/**"
       - "reservation/**"
@@ -36,7 +36,7 @@ jobs:
           filters: |
             config:
               - 'config/**'
-              - 'config-repo/**'  ###
+              - 'config-repo/**'
             eureka: 'eureka/**'
             gateway: 'gateway/**'
             user: 'user/**'
@@ -52,7 +52,7 @@ jobs:
           echo "accommodation=${{ contains(fromJson(steps.filter.outputs.changes), 'accommodation') }}" >> $GITHUB_OUTPUT
           echo "reservation=${{ contains(fromJson(steps.filter.outputs.changes), 'reservation') }}" >> $GITHUB_OUTPUT
 
-  # 1단계: Config Server - 변경시만 배포
+  # 1단계: Config Server
   deploy-config:
     needs: plan
     if: needs.plan.outputs.config-changed == 'true'
@@ -64,6 +64,7 @@ jobs:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       SUBNETS: ${{ vars.SUBNETS }}
       SECURITY_GROUPS: ${{ vars.SECURITY_GROUPS }}
+      NAMESPACE_ID: ${{ vars.CLOUD_MAP_NAMESPACE_ID }}
       IMAGE_TAG: ${{ github.sha }}
       SERVICE: config
       PORT: 8888
@@ -109,21 +110,74 @@ jobs:
           REV_ARN=$(aws ecs register-task-definition --cli-input-json file://taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "REV_ARN=$REV_ARN" >> $GITHUB_OUTPUT
 
+      - name: Setup Service Discovery
+        id: discovery
+        run: |
+          echo "🔍 Checking Service Discovery for config..."
+          REGISTRY_ARN=$(aws servicediscovery list-services \
+            --filters Name=NAMESPACE_ID,Values=${NAMESPACE_ID} \
+            --query "Services[?Name=='config'].Arn" \
+            --output text)
+          
+          if [ -z "$REGISTRY_ARN" ]; then
+            echo "📝 Creating Service Discovery for config..."
+            REGISTRY_ARN=$(aws servicediscovery create-service \
+              --name config \
+              --namespace-id ${NAMESPACE_ID} \
+              --dns-config "RoutingPolicy=MULTIVALUE,DnsRecords=[{Type=A,TTL=300}]" \
+              --health-check-custom-config FailureThreshold=1 \
+              --query 'Service.Arn' \
+              --output text)
+            echo "✅ Created: ${REGISTRY_ARN}"
+          else
+            echo "✅ Service Discovery already exists: ${REGISTRY_ARN}"
+          fi
+          
+          echo "REGISTRY_ARN=${REGISTRY_ARN}" >> $GITHUB_OUTPUT
+
       - name: Check if service exists
         id: ensure-svc
         continue-on-error: true
         run: |
           STATUS=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "project-config-svc" --query 'services[0].status' --output text 2>/dev/null)
           if [ "$STATUS" == "ACTIVE" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            HAS_DISCOVERY=$(aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "project-config-svc" \
+              --query 'length(services[0].serviceRegistries)' \
+              --output text)
+          
+            if [ "$HAS_DISCOVERY" == "0" ]; then
+              echo "⚠️ Service exists but no Service Discovery - needs recreation"
+              echo "exists=false" >> $GITHUB_OUTPUT
+              echo "needs_recreation=true" >> $GITHUB_OUTPUT
+            else
+              echo "✅ Service exists with Service Discovery"
+              echo "exists=true" >> $GITHUB_OUTPUT
+            fi
           else
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Delete service if needs recreation
+        if: steps.ensure-svc.outputs.needs_recreation == 'true'
+        run: |
+          echo "🔄 Recreating service to add Service Discovery..."
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "project-config-svc" \
+            --desired-count 0
+          aws ecs delete-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "project-config-svc"
+          echo "⏳ Waiting for service deletion..."
+          sleep 30
 
       - name: Create service (if not exists)
         if: steps.ensure-svc.outputs.exists != 'true'
         run: |
           NETCFG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUPS}],assignPublicIp=DISABLED}"
+          echo "🚀 Creating ECS Service with Service Discovery..."
           aws ecs create-service \
             --cluster "${ECS_CLUSTER}" \
             --service-name "project-config-svc" \
@@ -131,7 +185,9 @@ jobs:
             --desired-count 1 \
             --launch-type FARGATE \
             --platform-version LATEST \
-            --network-configuration "$NETCFG"
+            --network-configuration "$NETCFG" \
+            --service-registries "registryArn=${{ steps.discovery.outputs.REGISTRY_ARN }}"
+          echo "✅ Service created with DNS: config.project.local"
 
       - name: Update service (if exists)
         if: steps.ensure-svc.outputs.exists == 'true'
@@ -148,12 +204,11 @@ jobs:
           aws ecs wait services-stable \
             --cluster "${ECS_CLUSTER}" \
             --services "project-config-svc"
-          echo "✅ Config Server is stable"
+          echo "✅ Config Server is stable at config.project.local:8888"
 
-  # 2단계: Eureka Server - 변경시만 배포, Config 완료 후
+  # 2단계: Eureka Server
   deploy-eureka:
     needs: [plan, deploy-config]
-    # Config가 변경되었으면 완료 후, 변경 안되었으면 바로 실행
     if: |
       always() && 
       (needs.deploy-config.result == 'success' || needs.deploy-config.result == 'skipped') &&
@@ -166,6 +221,7 @@ jobs:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       SUBNETS: ${{ vars.SUBNETS }}
       SECURITY_GROUPS: ${{ vars.SECURITY_GROUPS }}
+      NAMESPACE_ID: ${{ vars.CLOUD_MAP_NAMESPACE_ID }}
       IMAGE_TAG: ${{ github.sha }}
       SERVICE: eureka
       PORT: 8761
@@ -211,21 +267,74 @@ jobs:
           REV_ARN=$(aws ecs register-task-definition --cli-input-json file://taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "REV_ARN=$REV_ARN" >> $GITHUB_OUTPUT
 
+      - name: Setup Service Discovery
+        id: discovery
+        run: |
+          echo "🔍 Checking Service Discovery for eureka..."
+          REGISTRY_ARN=$(aws servicediscovery list-services \
+            --filters Name=NAMESPACE_ID,Values=${NAMESPACE_ID} \
+            --query "Services[?Name=='eureka'].Arn" \
+            --output text)
+          
+          if [ -z "$REGISTRY_ARN" ]; then
+            echo "📝 Creating Service Discovery for eureka..."
+            REGISTRY_ARN=$(aws servicediscovery create-service \
+              --name eureka \
+              --namespace-id ${NAMESPACE_ID} \
+              --dns-config "RoutingPolicy=MULTIVALUE,DnsRecords=[{Type=A,TTL=300}]" \
+              --health-check-custom-config FailureThreshold=1 \
+              --query 'Service.Arn' \
+              --output text)
+            echo "✅ Created: ${REGISTRY_ARN}"
+          else
+            echo "✅ Service Discovery already exists: ${REGISTRY_ARN}"
+          fi
+          
+          echo "REGISTRY_ARN=${REGISTRY_ARN}" >> $GITHUB_OUTPUT
+
       - name: Check if service exists
         id: ensure-svc
         continue-on-error: true
         run: |
           STATUS=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "project-eureka-svc" --query 'services[0].status' --output text 2>/dev/null)
           if [ "$STATUS" == "ACTIVE" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            HAS_DISCOVERY=$(aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "project-eureka-svc" \
+              --query 'length(services[0].serviceRegistries)' \
+              --output text)
+          
+            if [ "$HAS_DISCOVERY" == "0" ]; then
+              echo "⚠️ Service exists but no Service Discovery - needs recreation"
+              echo "exists=false" >> $GITHUB_OUTPUT
+              echo "needs_recreation=true" >> $GITHUB_OUTPUT
+            else
+              echo "✅ Service exists with Service Discovery"
+              echo "exists=true" >> $GITHUB_OUTPUT
+            fi
           else
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Delete service if needs recreation
+        if: steps.ensure-svc.outputs.needs_recreation == 'true'
+        run: |
+          echo "🔄 Recreating service to add Service Discovery..."
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "project-eureka-svc" \
+            --desired-count 0
+          aws ecs delete-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "project-eureka-svc"
+          echo "⏳ Waiting for service deletion..."
+          sleep 30
 
       - name: Create service (if not exists)
         if: steps.ensure-svc.outputs.exists != 'true'
         run: |
           NETCFG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUPS}],assignPublicIp=DISABLED}"
+          echo "🚀 Creating ECS Service with Service Discovery..."
           aws ecs create-service \
             --cluster "${ECS_CLUSTER}" \
             --service-name "project-eureka-svc" \
@@ -233,7 +342,9 @@ jobs:
             --desired-count 1 \
             --launch-type FARGATE \
             --platform-version LATEST \
-            --network-configuration "$NETCFG"
+            --network-configuration "$NETCFG" \
+            --service-registries "registryArn=${{ steps.discovery.outputs.REGISTRY_ARN }}"
+          echo "✅ Service created with DNS: eureka.project.local"
 
       - name: Update service (if exists)
         if: steps.ensure-svc.outputs.exists == 'true'
@@ -250,9 +361,9 @@ jobs:
           aws ecs wait services-stable \
             --cluster "${ECS_CLUSTER}" \
             --services "project-eureka-svc"
-          echo "✅ Eureka Server is stable"
+          echo "✅ Eureka Server is stable at eureka.project.local:8761"
 
-  # 3단계: Gateway - 변경시만 배포
+  # 3단계: Gateway
   deploy-gateway:
     needs: [plan, deploy-config, deploy-eureka]
     if: |
@@ -268,6 +379,7 @@ jobs:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       SUBNETS: ${{ vars.SUBNETS }}
       SECURITY_GROUPS: ${{ vars.SECURITY_GROUPS }}
+      NAMESPACE_ID: ${{ vars.CLOUD_MAP_NAMESPACE_ID }}
       IMAGE_TAG: ${{ github.sha }}
       SERVICE: gateway
       PORT: 8080
@@ -313,21 +425,74 @@ jobs:
           REV_ARN=$(aws ecs register-task-definition --cli-input-json file://taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "REV_ARN=$REV_ARN" >> $GITHUB_OUTPUT
 
+      - name: Setup Service Discovery
+        id: discovery
+        run: |
+          echo "🔍 Checking Service Discovery for gateway..."
+          REGISTRY_ARN=$(aws servicediscovery list-services \
+            --filters Name=NAMESPACE_ID,Values=${NAMESPACE_ID} \
+            --query "Services[?Name=='gateway'].Arn" \
+            --output text)
+          
+          if [ -z "$REGISTRY_ARN" ]; then
+            echo "📝 Creating Service Discovery for gateway..."
+            REGISTRY_ARN=$(aws servicediscovery create-service \
+              --name gateway \
+              --namespace-id ${NAMESPACE_ID} \
+              --dns-config "RoutingPolicy=MULTIVALUE,DnsRecords=[{Type=A,TTL=300}]" \
+              --health-check-custom-config FailureThreshold=1 \
+              --query 'Service.Arn' \
+              --output text)
+            echo "✅ Created: ${REGISTRY_ARN}"
+          else
+            echo "✅ Service Discovery already exists: ${REGISTRY_ARN}"
+          fi
+          
+          echo "REGISTRY_ARN=${REGISTRY_ARN}" >> $GITHUB_OUTPUT
+
       - name: Check if service exists
         id: ensure-svc
         continue-on-error: true
         run: |
           STATUS=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "project-gateway-svc" --query 'services[0].status' --output text 2>/dev/null)
           if [ "$STATUS" == "ACTIVE" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            HAS_DISCOVERY=$(aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "project-gateway-svc" \
+              --query 'length(services[0].serviceRegistries)' \
+              --output text)
+          
+            if [ "$HAS_DISCOVERY" == "0" ]; then
+              echo "⚠️ Service exists but no Service Discovery - needs recreation"
+              echo "exists=false" >> $GITHUB_OUTPUT
+              echo "needs_recreation=true" >> $GITHUB_OUTPUT
+            else
+              echo "✅ Service exists with Service Discovery"
+              echo "exists=true" >> $GITHUB_OUTPUT
+            fi
           else
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Delete service if needs recreation
+        if: steps.ensure-svc.outputs.needs_recreation == 'true'
+        run: |
+          echo "🔄 Recreating service to add Service Discovery..."
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "project-gateway-svc" \
+            --desired-count 0
+          aws ecs delete-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "project-gateway-svc"
+          echo "⏳ Waiting for service deletion..."
+          sleep 30
 
       - name: Create service (if not exists)
         if: steps.ensure-svc.outputs.exists != 'true'
         run: |
           NETCFG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUPS}],assignPublicIp=DISABLED}"
+          echo "🚀 Creating ECS Service with Service Discovery and ALB..."
           aws ecs create-service \
             --cluster "${ECS_CLUSTER}" \
             --service-name "project-gateway-svc" \
@@ -336,7 +501,9 @@ jobs:
             --launch-type FARGATE \
             --platform-version LATEST \
             --network-configuration "$NETCFG" \
-            --load-balancers "targetGroupArn=${{ secrets.ALB_TG_ARN }},containerName=gateway,containerPort=8080"
+            --load-balancers "targetGroupArn=${{ secrets.ALB_TG_ARN }},containerName=gateway,containerPort=8080" \
+            --service-registries "registryArn=${{ steps.discovery.outputs.REGISTRY_ARN }}"
+          echo "✅ Service created with DNS: gateway.project.local"
 
       - name: Update service (if exists)
         if: steps.ensure-svc.outputs.exists == 'true'
@@ -347,7 +514,15 @@ jobs:
             --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
             --force-new-deployment
 
-  # 4단계: 비즈니스 서비스들 - 변경된 것만 병렬 배포
+      - name: Wait for service to be stable
+        run: |
+          echo "⏳ Waiting for Gateway to be stable..."
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "project-gateway-svc"
+          echo "✅ Gateway is stable at gateway.project.local:8080"
+
+  # 4단계: 비즈니스 서비스들
   deploy-services:
     needs: [plan, deploy-config, deploy-eureka, deploy-gateway]
     if: |
@@ -368,6 +543,7 @@ jobs:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       SUBNETS: ${{ vars.SUBNETS }}
       SECURITY_GROUPS: ${{ vars.SECURITY_GROUPS }}
+      NAMESPACE_ID: ${{ vars.CLOUD_MAP_NAMESPACE_ID }}
       IMAGE_TAG: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
@@ -439,21 +615,74 @@ jobs:
           REV_ARN=$(aws ecs register-task-definition --cli-input-json file://taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "REV_ARN=$REV_ARN" >> $GITHUB_OUTPUT
 
+      - name: Setup Service Discovery
+        id: discovery
+        run: |
+          echo "🔍 Checking Service Discovery for ${{ matrix.service }}..."
+          REGISTRY_ARN=$(aws servicediscovery list-services \
+            --filters Name=NAMESPACE_ID,Values=${NAMESPACE_ID} \
+            --query "Services[?Name=='${{ matrix.service }}'].Arn" \
+            --output text)
+          
+          if [ -z "$REGISTRY_ARN" ]; then
+            echo "📝 Creating Service Discovery for ${{ matrix.service }}..."
+            REGISTRY_ARN=$(aws servicediscovery create-service \
+              --name ${{ matrix.service }} \
+              --namespace-id ${NAMESPACE_ID} \
+              --dns-config "RoutingPolicy=MULTIVALUE,DnsRecords=[{Type=A,TTL=300}]" \
+              --health-check-custom-config FailureThreshold=1 \
+              --query 'Service.Arn' \
+              --output text)
+            echo "✅ Created: ${REGISTRY_ARN}"
+          else
+            echo "✅ Service Discovery already exists: ${REGISTRY_ARN}"
+          fi
+          
+          echo "REGISTRY_ARN=${REGISTRY_ARN}" >> $GITHUB_OUTPUT
+
       - name: Check if service exists
         id: ensure-svc
         continue-on-error: true
         run: |
           STATUS=$(aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "project-${{ matrix.service }}-svc" --query 'services[0].status' --output text 2>/dev/null)
           if [ "$STATUS" == "ACTIVE" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            HAS_DISCOVERY=$(aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "project-${{ matrix.service }}-svc" \
+              --query 'length(services[0].serviceRegistries)' \
+              --output text)
+          
+            if [ "$HAS_DISCOVERY" == "0" ]; then
+              echo "⚠️ Service exists but no Service Discovery - needs recreation"
+              echo "exists=false" >> $GITHUB_OUTPUT
+              echo "needs_recreation=true" >> $GITHUB_OUTPUT
+            else
+              echo "✅ Service exists with Service Discovery"
+              echo "exists=true" >> $GITHUB_OUTPUT
+            fi
           else
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Delete service if needs recreation
+        if: steps.ensure-svc.outputs.needs_recreation == 'true'
+        run: |
+          echo "🔄 Recreating service to add Service Discovery..."
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "project-${{ matrix.service }}-svc" \
+            --desired-count 0
+          aws ecs delete-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "project-${{ matrix.service }}-svc"
+          echo "⏳ Waiting for service deletion..."
+          sleep 30
 
       - name: Create service (if not exists)
         if: steps.ensure-svc.outputs.exists != 'true'
         run: |
           NETCFG="awsvpcConfiguration={subnets=[${SUBNETS}],securityGroups=[${SECURITY_GROUPS}],assignPublicIp=DISABLED}"
+          echo "🚀 Creating ECS Service with Service Discovery..."
           aws ecs create-service \
             --cluster "${ECS_CLUSTER}" \
             --service-name "project-${{ matrix.service }}-svc" \
@@ -461,7 +690,9 @@ jobs:
             --desired-count 1 \
             --launch-type FARGATE \
             --platform-version LATEST \
-            --network-configuration "$NETCFG"
+            --network-configuration "$NETCFG" \
+            --service-registries "registryArn=${{ steps.discovery.outputs.REGISTRY_ARN }}"
+          echo "✅ Service created with DNS: ${{ matrix.service }}.project.local"
 
       - name: Update service (if exists)
         if: steps.ensure-svc.outputs.exists == 'true'
@@ -471,3 +702,11 @@ jobs:
             --service "project-${{ matrix.service }}-svc" \
             --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
             --force-new-deployment
+
+      - name: Wait for service to be stable
+        run: |
+          echo "⏳ Waiting for ${{ matrix.service }} to be stable..."
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "project-${{ matrix.service }}-svc"
+          echo "✅ ${{ matrix.service }} is stable at ${{ matrix.service }}.project.local:${{ steps.meta.outputs.PORT }}"
