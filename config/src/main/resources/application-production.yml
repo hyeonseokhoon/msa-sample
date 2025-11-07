@@ -6,6 +6,8 @@ spring:
     name: config
   cloud:
     config:
+      import-check:
+        enabled: false
       server:
         native:
           search-locations:

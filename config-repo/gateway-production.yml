@@ -16,16 +16,21 @@ spring:
         - id: user
           uri: lb://user
           predicates:
-            - Path=/api/user/**
+            - Path=/api/users/**
+          filters:
+            - StripPrefix=1
         - id: reservation
           uri: lb://reservation
           predicates:
-            - Path=/api/reservation/**
+            - Path=/api/reservations/**
+          filters:
+            - StripPrefix=1
         - id: accommodation
           uri: lb://accommodation
           predicates:
-            - Path=/api/accommodation/**
-            -
+            - Path=/api/accommodations/**
+          filters:
+            - StripPrefix=1
 eureka:
   client:
     service-url:
