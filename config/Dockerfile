@@ -1,7 +1,17 @@
-FROM gradle:8.9-jdk21 AS builder
-WORKDIR /app
-COPY . .
-RUN gradle clean bootJar --no-daemon
+FROM eclipse-temurin:21-jdk AS builder
+WORKDIR /build
+
+COPY ../../build.gradle ../../settings.gradle ../../gradle.properties ./
+COPY ../../gradle ./gradle
+
+COPY . ./apps/config
+
+# gradlew 복사 (루트에 있다고 가정)
+COPY ../../gradlew ./gradlew
+RUN chmod +x ./gradlew
+
+# 멀티모듈 전체 빌드 중 reservation 모듈만 빌드
+RUN ./gradlew :apps:config:clean :apps:config:bootJar --no-daemon
 
 FROM eclipse-temurin:21-jre
 WORKDIR /app

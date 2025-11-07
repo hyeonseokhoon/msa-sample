@@ -1,7 +1,12 @@
-FROM gradle:8.9-jdk21 AS builder
+FROM eclipse-temurin:21-jdk AS builder
 WORKDIR /app
+
+COPY ../../settings.gradle ../../build.gradle ../../gradle.properties ./   # 루트 gradle 파일들
+COPY ../../gradle ./gradle
+
 COPY . .
-RUN gradle clean bootJar --no-daemon
+
+RUN chmod +x ./gradlew && ./gradlew clean bootJar --no-daemon
 
 FROM eclipse-temurin:21-jre
 WORKDIR /app
