@@ -137,7 +137,7 @@ jobs:
               --launch-type FARGATE \
               --platform-version LATEST \
               --network-configuration "$NETCFG" \
-              --load-balancers "targetGroupArn=${{ vars.ALB_TG_ARN }},containerName=gateway,containerPort=8080"
+              --load-balancers "targetGroupArn=${{ secrets.ALB_TG_ARN }},containerName=gateway,containerPort=8080"
           else
             # 일반 서비스
             aws ecs create-service \
