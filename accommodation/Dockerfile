@@ -2,7 +2,7 @@ FROM eclipse-temurin:21-jdk AS builder
 WORKDIR /build
 
 # 루트 프로젝트 파일 복사
-COPY build.gradle settings.gradle gradle.properties ./
+COPY build.gradle settings.gradle ./
 COPY gradle ./gradle
 COPY gradlew ./
 RUN chmod +x ./gradlew
