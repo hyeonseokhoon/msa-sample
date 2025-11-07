@@ -8,7 +8,7 @@ spring:
     config:
       server:
         git:
-          uri: https://github.com/hyeonseokhoon/msa-sample.git # github repository
+          uri: https://github.com/hyeonseokhoon/msa-sample.git
           search-paths: config-repo
           clone-on-start: true
-          default-label: main # 기본 브랜치
+          default-label: main

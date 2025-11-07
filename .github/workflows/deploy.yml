@@ -8,6 +8,7 @@ on:
       - "accommodation/**"
       - "common/**"
       - "config/**"
+      - "config-repo/**"  ###
       - "eureka/**"
       - "gateway/**"
       - "reservation/**"
@@ -33,7 +34,9 @@ jobs:
         with:
           token: ${{ github.token }}
           filters: |
-            config: 'config/**'
+            config:
+              - 'config/**'
+              - 'config-repo/**'  ###
             eureka: 'eureka/**'
             gateway: 'gateway/**'
             user: 'user/**'
