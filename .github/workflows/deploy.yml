@@ -38,9 +38,9 @@ jobs:
     environment: production
     strategy:
       matrix:
-        service: [config, eureka, gateway, user, accommodation, reservation]
+        service: [ config, eureka, gateway, user, accommodation, reservation ]
       max-parallel: 3
-    if: ${{ contains(fromJson(needs.plan.outputs.changed), matrix.service) }}
+
     env:
       ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -50,6 +50,10 @@ jobs:
       IMAGE_TAG: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Skip unchanged services
+        if: ${{ !contains(fromJson(needs.plan.outputs.changed), matrix.service) }}
+        run: echo "No changes in ${{ matrix.service }}, skipping." && exit 0
 
       - name: Set service metadata
         id: meta
