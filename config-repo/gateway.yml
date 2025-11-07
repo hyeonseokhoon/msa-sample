@@ -12,17 +12,17 @@ spring:
           lower-case-service-id: true
       routes:
         - id: user
-          uri: lb://user
+          uri: lb://users
           predicates:
-            - Path=/api/user/**
-        - id: reservation
-          uri: lb://reservation
+            - Path=/users/**
+        - id: reservations
+          uri: lb://reservations
           predicates:
-            - Path=/api/reservation/**
+            - Path=/reservations/**
         - id: accommodation
-          uri: lb://accommodation
+          uri: lb://accommodations
           predicates:
-            - Path=/api/accommodation/**
+            - Path=/accommodations/**
 
   logging:
     level:
