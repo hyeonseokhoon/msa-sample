@@ -1,20 +1,24 @@
 FROM eclipse-temurin:21-jdk AS builder
 WORKDIR /build
 
-COPY ../../build.gradle ../../settings.gradle ../../gradle.properties ./
-COPY ../../gradle ./gradle
-
-COPY . ./apps/user
-
-# gradlew 복사 (루트에 있다고 가정)
-COPY ../../gradlew ./gradlew
+# 루트 프로젝트 파일 복사
+COPY build.gradle settings.gradle gradle.properties ./
+COPY gradle ./gradle
+COPY gradlew ./
 RUN chmod +x ./gradlew
 
-# 멀티모듈 전체 빌드 중 reservation 모듈만 빌드
-RUN ./gradlew :apps:user:clean :apps:user:bootJar --no-daemon
+# common 모듈 복사 (의존성)
+COPY common ./common
 
+# user 서비스 복사
+COPY user ./user
+
+# 빌드
+RUN ./gradlew :user:clean :user:bootJar --no-daemon
+
+# 실행 이미지
 FROM eclipse-temurin:21-jre
 WORKDIR /app
-COPY --from=builder /app/build/libs/*.jar app.jar
+COPY --from=builder /build/user/build/libs/*.jar app.jar
 EXPOSE 8081
-ENTRYPOINT ["java","-XX:+UseContainerSupport","-XX:MaxRAMPercentage=75.0","-jar","/app/app.jar"]
+ENTRYPOINT ["java", "-jar", "app.jar"]

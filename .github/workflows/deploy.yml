@@ -89,7 +89,7 @@ jobs:
         working-directory: ${{ matrix.service }}
         run: |
           ECR_URI=$(aws ecr describe-repositories --repository-names "${{ steps.meta.outputs.REPO }}" --query 'repositories[0].repositoryUri' --output text)
-          docker build -t ${ECR_URI}:${IMAGE_TAG} .
+          docker build -f ${{ matrix.service }}/Dockerfile -t ${ECR_URI}:${IMAGE_TAG} .
           docker push ${ECR_URI}:${IMAGE_TAG}
           echo "ECR_URI=${ECR_URI}" >> $GITHUB_ENV
 
