@@ -20,5 +20,8 @@ RUN ./gradlew :config:clean :config:bootJar --no-daemon
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 COPY --from=builder /build/config/build/libs/*.jar app.jar
+
+COPY config-repo /app/config-repo
+
 EXPOSE 8888
 ENTRYPOINT ["java", "-jar", "app.jar"]

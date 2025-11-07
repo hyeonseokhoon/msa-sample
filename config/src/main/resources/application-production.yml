@@ -9,6 +9,5 @@ spring:
       server:
         native:
           search-locations:
-            - classpath:/configs
             - file:/app/config-repo  # 파일 시스템의 config-repo 사용
         default-label: main
