@@ -48,6 +48,8 @@ management:
       exposure:
         include: gateway,health,info
   endpoint:
+    gateway:
+      enabled: true
     health:
       probes:
         enabled: true
