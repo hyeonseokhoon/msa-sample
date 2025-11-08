@@ -186,6 +186,7 @@ jobs:
             --launch-type FARGATE \
             --platform-version LATEST \
             --network-configuration "$NETCFG" \
+            --enable-execute-command \
             --service-registries "registryArn=${{ steps.discovery.outputs.REGISTRY_ARN }}"
           echo "✅ Service created with DNS: config.project.local"
 
@@ -196,6 +197,7 @@ jobs:
             --cluster "${ECS_CLUSTER}" \
             --service "project-config-svc" \
             --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --enable-execute-command \
             --force-new-deployment
 
       - name: Wait for service to be stable
@@ -343,6 +345,7 @@ jobs:
             --launch-type FARGATE \
             --platform-version LATEST \
             --network-configuration "$NETCFG" \
+            --enable-execute-command \
             --service-registries "registryArn=${{ steps.discovery.outputs.REGISTRY_ARN }}"
           echo "✅ Service created with DNS: eureka.project.local"
 
@@ -353,6 +356,7 @@ jobs:
             --cluster "${ECS_CLUSTER}" \
             --service "project-eureka-svc" \
             --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --enable-execute-command \
             --force-new-deployment
 
       - name: Wait for service to be stable
@@ -502,6 +506,7 @@ jobs:
             --platform-version LATEST \
             --network-configuration "$NETCFG" \
             --load-balancers "targetGroupArn=${{ secrets.ALB_TG_ARN }},containerName=gateway,containerPort=8080" \
+            --enable-execute-command \
             --service-registries "registryArn=${{ steps.discovery.outputs.REGISTRY_ARN }}"
           echo "✅ Service created with DNS: gateway.project.local"
 
@@ -512,6 +517,7 @@ jobs:
             --cluster "${ECS_CLUSTER}" \
             --service "project-gateway-svc" \
             --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --enable-execute-command \
             --force-new-deployment
 
       - name: Wait for service to be stable
@@ -691,6 +697,7 @@ jobs:
             --launch-type FARGATE \
             --platform-version LATEST \
             --network-configuration "$NETCFG" \
+            --enable-execute-command \
             --service-registries "registryArn=${{ steps.discovery.outputs.REGISTRY_ARN }}"
           echo "✅ Service created with DNS: ${{ matrix.service }}.project.local"
 
@@ -701,6 +708,7 @@ jobs:
             --cluster "${ECS_CLUSTER}" \
             --service "project-${{ matrix.service }}-svc" \
             --task-definition "${{ steps.reg.outputs.REV_ARN }}" \
+            --enable-execute-command \
             --force-new-deployment
 
       - name: Wait for service to be stable
