@@ -14,21 +14,18 @@ spring:
         - id: user
           uri: lb://user
           predicates:
-            - Path=/api/users/**
+            - Path=/users/**
           filters:
-            - StripPrefix=1
         - id: reservation
           uri: lb://reservation
           predicates:
-            - Path=/api/reservations/**
+            - Path=/reservations/**
           filters:
-            - StripPrefix=1
         - id: accommodation
           uri: lb://accommodation
           predicates:
-            - Path=/api/accommodations/**
+            - Path=/accommodations/**
           filters:
-            - StripPrefix=1
 eureka:
   client:
     service-url:
@@ -38,9 +35,9 @@ eureka:
   instance:
     prefer-ip-address: true
 
-  logging:
-    level:
-      org.springframework.cloud.gateway: ERROR
+logging:
+  level:
+    org.springframework.cloud.gateway: ERROR
 
 management:
   endpoints:
@@ -50,6 +47,7 @@ management:
   endpoint:
     gateway:
       enabled: true
+      access: read-only
     health:
       probes:
         enabled: true
