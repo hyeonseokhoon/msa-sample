@@ -13,3 +13,13 @@ spring:
           search-locations:
             - file:/app/config-repo  # 파일 시스템의 config-repo 사용
         default-label: main
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
