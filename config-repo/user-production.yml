@@ -1,7 +1,5 @@
 server.port: 8081
 spring:
-  application:
-    name: user
   config:
     import: "optional:configserver:http://config.project.local:8888"
   cloud:
