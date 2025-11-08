@@ -26,6 +26,10 @@ spring:
           predicates:
             - Path=/accommodations/**
           filters:
+      actuator:
+        verbose:
+          enabled: true
+
 eureka:
   client:
     service-url:
