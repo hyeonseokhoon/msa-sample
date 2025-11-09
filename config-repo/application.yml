@@ -17,5 +17,3 @@ eureka:
 logging:
   level:
     root: INFO
-    org.springframework.cloud.gateway: INFO
-    org.springframework.web: INFO
