@@ -26,7 +26,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: "*"
+#        include: health,info
   endpoint:
     health:
       probes:
