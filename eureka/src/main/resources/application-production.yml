@@ -1,3 +1,6 @@
+server:
+  port: 8761
+
 eureka:
   client:
     # eureka 에 등록할지 (자기 자신을 등록하지 않음)
