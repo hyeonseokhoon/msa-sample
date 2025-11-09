@@ -18,6 +18,9 @@ RUN ./gradlew :config:clean :config:bootJar --no-daemon
 
 # 실행 이미지
 FROM eclipse-temurin:17-jre
+
+RUN apt-get update && apt-get install -y git ca-certificates && apt-get clean
+
 WORKDIR /app
 COPY --from=builder /build/config/build/libs/*.jar app.jar
 
