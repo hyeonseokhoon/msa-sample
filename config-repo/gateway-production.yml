@@ -5,8 +5,10 @@ spring:
     gateway:
       discovery:
         locator:
-          enabled: true # eureka 등록 서비스로 자동 라우트 생성
+          enabled: false # eureka 등록 서비스로 자동 라우트 생성
           lower-case-service-id: true
+          filters:
+            - StripPrefix=1
       routes:
         - id: user
           uri: lb://user
