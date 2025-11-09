@@ -15,8 +15,10 @@ spring:
         git:
           uri: https://github.com/hyeonseokhoon/msa-sample.git
           search-paths: config-repo
-          clone-on-start: true
+          clone-on-start: true # 시작할때 clone
           default-label: main
+          force-pull: true
+          basedir: ./config-repo
 
 management:
   endpoints:
