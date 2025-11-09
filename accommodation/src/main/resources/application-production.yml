@@ -2,15 +2,3 @@ server.port: 8082
 spring:
   application:
     name: accommodation
-  cloud:
-    config:
-      fail-fast: false
-
-eureka:
-  client:
-    service-url:
-      defaultZone: http://eureka.project.local:8761/eureka/
-    register-with-eureka: true
-    fetch-registry: true
-  instance:
-    prefer-ip-address: true

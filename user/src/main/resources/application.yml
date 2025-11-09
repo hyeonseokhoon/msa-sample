@@ -4,15 +4,4 @@ spring:
     name: user
   config:
     import: "optional:configserver:http://localhost:8888"
-  cloud:
-    config:
-      fail-fast: false
 
-eureka:
-  client:
-    service-url:
-      defaultZone: http://localhost:8761/eureka/  # eureka → localhost로 변경
-    register-with-eureka: true
-    fetch-registry: true
-  instance:
-    prefer-ip-address: true

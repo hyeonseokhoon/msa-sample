@@ -5,8 +5,6 @@ spring:
 
 eureka:
   client:
-    service-url:
-      defaultZone: http://localhost:8761/eureka/  # eureka → localhost로 변경
     register-with-eureka: true
     fetch-registry: true
   instance:

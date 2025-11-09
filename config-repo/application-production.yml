@@ -6,8 +6,9 @@ spring:
       override-system-properties: false
     discovery:
       enabled: true
+
   main:
-    allow-bean-definition-overriding: true
+    allow-bean-definition-overriding: false
 
 eureka:
   client:

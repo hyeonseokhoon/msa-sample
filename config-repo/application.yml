@@ -16,7 +16,7 @@ spring:
   main:
     # true : 동일한 이름의 Bean이 여러개 일때 마지막 정의가 덮어씀.
     # false (default) : 어플리케이션 로딩 시 오류
-    allow-bean-definition-overriding: true
+    allow-bean-definition-overriding: false
 
 eureka:
   client:

@@ -4,20 +4,3 @@ server:
 spring:
   application:
     name: gateway
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: "*"
-#        include: gateway,health,info
-  endpoint:
-    gateway:
-      access: read-only
-    health:
-      probes:
-        enabled: true
-
-logging:
-  level:
-    org.springframework.cloud.gateway: ERROR

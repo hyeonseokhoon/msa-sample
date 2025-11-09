@@ -5,9 +5,7 @@ spring:
 
 eureka:
   client:
-    service-url:
-      defaultZone: http://eureka.project.local:8761/eureka/  # eureka → localhost로 변경
     register-with-eureka: true
     fetch-registry: true
   instance:
-    prefer-ip-address: true
+    prefer-ip-address: false
