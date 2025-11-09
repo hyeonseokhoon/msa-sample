@@ -3,3 +3,6 @@ spring:
   application:
     name: user
 
+eureka:
+  instance:
+    hostname: user.project.local

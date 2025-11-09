@@ -5,3 +5,7 @@ spring:
   cloud:
     config:
       fail-fast: false
+
+eureka:
+  instance:
+    hostname: reservation.project.local
