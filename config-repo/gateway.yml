@@ -11,7 +11,7 @@ spring:
         webflux:
           discovery:
             locator:
-              enabled: false
+              enabled: false # discovery(eureka) 에 등록된 서비스 목록 자동 라우트 동적 생성
               lower-case-service-id: true
           routes:
             - id: user
@@ -31,3 +31,7 @@ eureka:
   client:
     service-url:
       defaultZone: http://localhost:8761/eureka/
+    register-with-eureka: false
+    fetch-registry: true
+  instance:
+    prefer-ip-address: true

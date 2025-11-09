@@ -7,51 +7,31 @@ spring:
 
   cloud:
     gateway:
-      discovery:
-        locator:
-          enabled: true
-          lower-case-service-id: true
+      server:
+        webflux:
+          discovery:
+            locator:
+              enabled: false
+              lower-case-service-id: true
       routes:
         - id: user
           uri: lb://user
           predicates:
             - Path=/users/**
-          filters:
         - id: reservation
           uri: lb://reservation
           predicates:
             - Path=/reservations/**
-          filters:
         - id: accommodation
           uri: lb://accommodation
           predicates:
             - Path=/accommodations/**
-          filters:
-      actuator:
-        verbose:
-          enabled: true
 
 eureka:
   client:
     service-url:
       defaultZone: http://eureka.project.local:8761/eureka/
-    register-with-eureka: true
+    register-with-eureka: false
     fetch-registry: true
   instance:
-    prefer-ip-address: true
-
-logging:
-  level:
-    org.springframework.cloud.gateway: ERROR
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: gateway,health,info
-  endpoint:
-    gateway:
-      access: read-only
-    health:
-      probes:
-        enabled: true
+    prefer-ip-address: false
