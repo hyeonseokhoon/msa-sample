@@ -9,7 +9,6 @@ spring:
       server:
         git:
           uri: https://github.com/hyeonseokhoon/msa-sample.git
-          u
           search-paths: config-repo
           clone-on-start: true
           default-label: main
