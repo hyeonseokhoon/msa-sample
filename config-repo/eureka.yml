@@ -6,15 +6,18 @@ spring:
     name: eureka
 
 eureka:
-  client:
-    register-with-eureka: false
-    fetch-registry: false
-    service-url:
-      defaultZone: http://localhost:8761/eureka/
   server:
-    enable-self-preservation: true
-    renewal-percent-threshold: 0.85  # 기본값
-  eviction-interval-timer-in-ms: 60000  # 60초
+    # 자기보호모드
+    # eureka 가 등록된 서버를 바로 제거하지 않게 보호모드를 켜는지 여부
+    # false 면 각 서비스 heartbeat 이 없으면 바로 제거
+    # 개발에서는 false 로 두어 빠르게 테스트
+    enable-self-preservation: false
+    # eureka 에 등록된 인스턴스 heartbeat 이 85% 이상이면 정상
+    renewal-percent-threshold: 0.85
+    # heartbeat 없는 인스턴스 확인하고 제거를 판단하는 주기
+    eviction-interval-timer-in-ms: 60000
   instance:
-    lease-renewal-interval-in-seconds: 30      # heartbeat 간격
-    lease-expiration-duration-in-seconds: 90   # 만료 시간
+    # 클라이언트 30초 주기로 인스턴스로 부터 heartbeat 요청 받음
+    lease-renewal-interval-in-seconds: 30
+    # 클라이언트가 90초 동안 heartbeat 이 없으면 제거
+    lease-expiration-duration-in-seconds: 90

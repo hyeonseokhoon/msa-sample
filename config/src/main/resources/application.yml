@@ -1,6 +1,11 @@
 server:
   port: 8888
 
+###################
+# config 서버가 여러개라면 config 도 discovery (eureka) 에 등록하는 것이 좋은 경우도 있지만
+# config 서버가 eureka 보다 먼저 로딩 되어야 하는 경우도 많아 서버간 의존성 문제가 발생할 수 있음
+###################
+
 spring:
   application:
     name: config

@@ -1,24 +1,13 @@
-server:
-  port: 8761
-
-spring:
-  application:
-    name: eureka
-
 eureka:
   client:
+    # eureka 에 등록할지 (자기 자신을 등록하지 않음)
     register-with-eureka: false
+    # 다른 서비스 조회 여부
     fetch-registry: false
+    # eureka 서버 주소 (eureka 가 다중 서버로 구성되는 경우에 필요)
     service-url:
-      # Ensure clients can reach the server via routable DNS inside VPC
       defaultZone: http://eureka.project.local:8761/eureka/
-  server:
-    # In production, keep self-preservation on to avoid mass eviction on network hiccups
-    enable-self-preservation: true
+
+  # 단일 서버일때 localhost 다중서버일때 중요
   instance:
-    # Advertise a stable hostname (must resolve within your VPC)
     hostname: eureka.project.local
-    # If your DNS is not ready, you can switch to IP-based advertisement:
-    # prefer-ip-address: true
-    lease-renewal-interval-in-seconds: 30
-    lease-expiration-duration-in-seconds: 90
