@@ -12,8 +12,6 @@ spring:
             locator:
               enabled: false # eureka에 등록된 서비스 목록으로 자동 라우트 생성
               lower-case-service-id: true
-              filters:
-                - StripPrefix=1
           routes:
             - id: user
               uri: http://localhost:8081
