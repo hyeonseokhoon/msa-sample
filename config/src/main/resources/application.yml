@@ -12,3 +12,13 @@ spring:
           search-paths: config-repo
           clone-on-start: true
           default-label: main
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
