@@ -4,32 +4,35 @@ server:
 spring:
   application:
     name: gateway
+  config:
+    import: "optional:configserver:http://localhost:8888"
+
   cloud:
     gateway:
-      discovery:
-        locator:
-          enabled: true
-          lower-case-service-id: true
-      routes:
-        - id: user
-          uri: lb://user
-          predicates:
-            - Path=/users/**
-          filters:
-        - id: reservation
-          uri: lb://reservation
-          predicates:
-            - Path=/reservations/**
-          filters:
-        - id: accommodation
-          uri: lb://accommodation
-          predicates:
-            - Path=/accommodations/**
-          filters:
+      server:
+        webflux:
+          discovery:
+            locator:
+              enabled: true
+              lower-case-service-id: true
+          routes:
+            - id: user
+              uri: http://localhost:8081
+              predicates:
+                - Path=/users/**
+            - id: reservation
+              uri: http://localhost:8083
+              predicates:
+                - Path=/reservations/**
+            - id: accommodation
+              uri: http://localhost:8082
+              predicates:
+                - Path=/accommodations/**
 
-logging:
-  level:
-    org.springframework.cloud.gateway: DEBUG
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
 
 management:
   endpoints:
