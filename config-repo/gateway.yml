@@ -14,15 +14,15 @@ spring:
               lower-case-service-id: true
           routes:
             - id: user
-              uri: http://localhost:8081
+              uri: lb://user
               predicates:
                 - Path=/users/**
             - id: reservation
-              uri: http://localhost:8083
+              uri: lb://reservation
               predicates:
                 - Path=/reservations/**
             - id: accommodation
-              uri: http://localhost:8082
+              uri: lb://accommodation
               predicates:
                 - Path=/accommodations/**
 
