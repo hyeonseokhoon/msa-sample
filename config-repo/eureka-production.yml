@@ -1,7 +1,3 @@
-spring:
-  application:
-    name: eureka
-
 eureka:
   server:
     # 자기보호모드

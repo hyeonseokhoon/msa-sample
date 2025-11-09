@@ -1,6 +1,3 @@
-server:
-  port: 8080
-
 spring:
 
   cloud:
@@ -9,7 +6,7 @@ spring:
         webflux:
           discovery:
             locator:
-              enabled: false # discovery(eureka) 에 등록된 서비스 목록 자동 라우트 동적 생성
+              enabled: true # discovery(eureka) 에 등록된 서비스 목록 자동 라우트 동적 생성 (eureka 등록된 서비스)
               lower-case-service-id: true
       routes:
         - id: user
